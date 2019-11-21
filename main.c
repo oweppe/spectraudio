@@ -49,11 +49,10 @@ Uint8 logmag(kiss_fft_cpx value, fftcontext params)
     return 0;
 }
 
-void hann(float *vectorin, float* vectorout)
+void hann(float *vectorin, float* hannwin, float* vectorout)
 {
-    for(int i=0;i < FFT_SIZE;i++)
-    {
-        vectorout[i]=vectorin[i]/2.*(1.-cos(2.*M_PI*i/(FFT_SIZE-1)));
+    for(int i=0;i < FFT_SIZE;i++) {
+        vectorout[i]=vectorin[i]/2.*hannwin[i];
     }
 }
 Uint32 genaudio(float *buffer)
@@ -66,35 +65,29 @@ Uint32 genaudio(float *buffer)
 
     Uint32 current_cnt = SDL_GetTicks();
     Uint32 duration_ms;
-    if (current_cnt - last_cnt < (1<<31) )
-    {
+    if (current_cnt - last_cnt < (1<<31) ) {
         duration_ms = current_cnt - last_cnt;
     }
-    else
-    {
+    else {
         duration_ms = (~0)  - (current_cnt - last_cnt) + 1;
     }
     last_cnt = current_cnt;
     // Determine number of samples to generate
     Uint32 nsamples = duration_ms * FSAMP/1000;
-    
+
     Uint32 index = 0;
     for(Uint32 index = 0; index < nsamples; index++)
     {
-        if (remaining < (FSAMP / freq) / 2)
-        {
+        if (remaining < (FSAMP / freq) / 2) {
             buffer[index]  = 0.9;
         }
-        else
-        {
+        else {
             buffer[index]  = -0.9;
         }
         remaining--;
-        if (remaining == 0)
-        {
+        if (remaining == 0) {
             freq++;
-            if (freq == FAKE_FMAX)
-            {
+            if (freq == FAKE_FMAX) {
                 freq = FAKE_FMIN;
             }
             remaining = FSAMP / freq;
@@ -106,41 +99,40 @@ Uint32 genaudio(float *buffer)
 void setpixel(SDL_Surface *screen, int x, int y, Uint8 r, Uint8 g, Uint8 b)
 {
     Uint32 *pixmem32;
-    Uint32 colour;  
- 
+    Uint32 colour;
+
     colour = SDL_MapRGB( screen->format, r, g, b );
-  
-    pixmem32 = (Uint32*) screen->pixels  + y + x;
+
+    pixmem32 = (Uint32*) screen->pixels  + y*screen->w + x;
     *pixmem32 = colour;
 }
 
-void DrawScreen(SDL_Surface* screen, kiss_fft_cpx* column, fftcontext params)
-{ 
+void DrawScreen(SDL_Surface* screen, kiss_fft_cpx* column, Uint16* logmap, fftcontext params)
+{
     static int x = 0;
     int y, ytimesw;
-  
-    if(SDL_MUSTLOCK(screen)) 
-    {
+
+    if(SDL_MUSTLOCK(screen)) {
         if(SDL_LockSurface(screen) < 0) return;
     }
 
-    for(y = 0; y < FFT_SIZE/2; y++ ) 
-    {
-        ytimesw = (FFT_SIZE/2 - y)*screen->pitch/BPP;
-        setpixel(screen, x, ytimesw, logmag(column[y], params), 0, 0);
+    //for(y = 0; y < FFT_SIZE/2; y++ ) {
+    //    ytimesw = (FFT_SIZE/2 - y);
+    //    setpixel(screen, x, ytimesw, logmag(column[y], params), 0, 0);
+    //}
+    for(y = 0; y < screen->h; y++ ) {
+        setpixel(screen, x, y, logmag(column[FFT_SIZE/2 - 1 - logmap[y]], params), 0, 0);
     }
-    if (x< screen->w)
-    {
+    if (x< screen->w - 1) {
         x++;
     }
-    else
-    {
+    else {
         x = 0;
     }
 
     if(SDL_MUSTLOCK(screen)) SDL_UnlockSurface(screen);
-  
-    SDL_Flip(screen); 
+
+    SDL_Flip(screen);
 }
 
 
@@ -158,7 +150,7 @@ int main(int argc, char* argv[])
         SDL_Quit();
         return 1;
     }
-  
+
     // ALSA initialization
     /* Open PCM device for recording (capture). */
     int dir = 0;
@@ -197,7 +189,7 @@ int main(int argc, char* argv[])
     snd_pcm_hw_params_get_period_size(alsaparams, &alsaframes, &dir);
     int alsasize = alsaframes * 4; /* 2 bytes/sample, 2 channels */
     alsabuffer = (char *) malloc(alsasize);
-  
+
     // FFT Initialization
     fftcontext params;
     params.gain = INIT_GAIN;
@@ -211,9 +203,20 @@ int main(int argc, char* argv[])
     han_buf = (float *)malloc(FFT_SIZE*sizeof(float));
     fft_buf = (kiss_fft_cpx *)malloc(FFT_SIZE*sizeof(kiss_fft_cpx));
     kiss_fftr_cfg mycfg=kiss_fftr_alloc(FFT_SIZE,0,NULL,NULL);
-
-    while(!quit) 
-    {
+    // preprocess hanning window
+    float hannwin[FFT_SIZE];
+    for(int i=0;i < FFT_SIZE;i++) {
+        hannwin[i]=1.-cos(2.*M_PI*i/(FFT_SIZE-1));
+    }
+    // preprocess vertical log mapping
+    Uint16 *logmap;
+    logmap = (Uint16 *)malloc(screen->h*sizeof(Uint16));
+    const float clogfact = (FFT_SIZE/2 - 1)/log(screen->h);
+    logmap[0] = 0;
+    for(int i=1;i <screen->h;i++) {
+        logmap[i] = (Uint16)(clogfact*log(i));
+    }
+    while(!quit) {
         rc = snd_pcm_readi(handle, alsabuffer, alsaframes);
         if (rc == -EPIPE) {
             /* EPIPE means overrun */
@@ -232,10 +235,8 @@ int main(int argc, char* argv[])
          wrcnt += alsaframes;
          //wrcnt += genaudio(&samples_buf[wrcnt]);
          // manage buffer
-         if (wrcnt > COPY_TRIG)
-         {
-             if(wrcnt - rdcnt > BUF_SIZE/2)
-             {
+         if (wrcnt > COPY_TRIG) {
+             if(wrcnt - rdcnt > BUF_SIZE/2) {
                  printf("Abort, overflow\n");
                  return 0;
              }
@@ -245,24 +246,20 @@ int main(int argc, char* argv[])
              rdcnt = 0;
              printf("to %d %d \n", wrcnt, rdcnt);
          }
-         if (wrcnt - rdcnt >= FFT_SIZE)
-         {
+         if (wrcnt - rdcnt >= FFT_SIZE) {
             // perform FFT
-            hann(&samples_buf[rdcnt], han_buf);
+            hann(&samples_buf[rdcnt], &hannwin[0], han_buf);
             kiss_fftr(mycfg, han_buf, fft_buf);
-            DrawScreen(screen, fft_buf, params);
+            DrawScreen(screen, fft_buf, logmap, params);
             rdcnt += FFT_SHIFT;
          }
 
-         while(SDL_PollEvent(&event)) 
-         {      
-              switch (event.type) 
-              {
+         while(SDL_PollEvent(&event)) {
+              switch (event.type) {
                   case SDL_QUIT:
 	              quit = 1;
 	              break;
-                  case SDL_KEYDOWN:
-                  {
+                  case SDL_KEYDOWN: {
                       const Uint8 *state = SDL_GetKeyState(NULL);
                       if (state[SDLK_DOWN]) params.gain -= 1;
                       if (state[SDLK_UP]) params.gain += 1;
@@ -280,6 +277,7 @@ int main(int argc, char* argv[])
   
     snd_pcm_drain(handle);
     snd_pcm_close(handle);
+    free(logmap);
     free(alsabuffer);
     free(samples_buf);
     free(han_buf);
