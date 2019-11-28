@@ -35,7 +35,7 @@ typedef struct {
     Uint8 offset;
 } fftcontext;
 
-Uint8 logmag(kiss_fft_cpx value, fftcontext params)
+Uint16 logmag(kiss_fft_cpx value, fftcontext params)
 {
     float x = (float)value.r;
     float y = (float)value.i;
@@ -44,8 +44,8 @@ Uint8 logmag(kiss_fft_cpx value, fftcontext params)
     if (d>0) logd = log(d/2.);
     else logd = -21;
     float res = logd*params.gain + params.offset;
-    if (res > 255.) return 255;
-    if (res > 0.) return (Uint8)res;
+    if (res > 16383.) return 16383;
+    if (res > 0.) return (Uint16)res;
     return 0;
 }
 
@@ -54,46 +54,6 @@ void hann(float *vectorin, float* hannwin, float* vectorout)
     for(int i=0;i < FFT_SIZE;i++) {
         vectorout[i]=vectorin[i]/2.*hannwin[i];
     }
-}
-Uint32 genaudio(float *buffer)
-{
-    Uint32 last_cnt = SDL_GetTicks();
-    // Current frequency
-    static Uint16 freq = FAKE_FMIN;
-    // Remainging samples
-    static Uint32 remaining = FSAMP/FAKE_FMIN;
-
-    Uint32 current_cnt = SDL_GetTicks();
-    Uint32 duration_ms;
-    if (current_cnt - last_cnt < (1<<31) ) {
-        duration_ms = current_cnt - last_cnt;
-    }
-    else {
-        duration_ms = (~0)  - (current_cnt - last_cnt) + 1;
-    }
-    last_cnt = current_cnt;
-    // Determine number of samples to generate
-    Uint32 nsamples = duration_ms * FSAMP/1000;
-
-    Uint32 index = 0;
-    for(Uint32 index = 0; index < nsamples; index++)
-    {
-        if (remaining < (FSAMP / freq) / 2) {
-            buffer[index]  = 0.9;
-        }
-        else {
-            buffer[index]  = -0.9;
-        }
-        remaining--;
-        if (remaining == 0) {
-            freq++;
-            if (freq == FAKE_FMAX) {
-                freq = FAKE_FMIN;
-            }
-            remaining = FSAMP / freq;
-        }
-    }
-    return nsamples;
 }
 
 void setpixel(SDL_Surface *screen, int x, int y, Uint8 r, Uint8 g, Uint8 b)
@@ -107,21 +67,18 @@ void setpixel(SDL_Surface *screen, int x, int y, Uint8 r, Uint8 g, Uint8 b)
     *pixmem32 = colour;
 }
 
-void DrawScreen(SDL_Surface* screen, kiss_fft_cpx* column, Uint16* logmap, fftcontext params)
+void DrawScreen(SDL_Surface* screen, kiss_fft_cpx* column, Uint16* logmap, Uint8* redmap, Uint8* greenmap, Uint8* bluemap, fftcontext params)
 {
     static int x = 0;
     int y, ytimesw;
+    Uint16 logmagy = logmag(column[FFT_SIZE/2 - 1 - logmap[y]], params);
 
     if(SDL_MUSTLOCK(screen)) {
         if(SDL_LockSurface(screen) < 0) return;
     }
 
-    //for(y = 0; y < FFT_SIZE/2; y++ ) {
-    //    ytimesw = (FFT_SIZE/2 - y);
-    //    setpixel(screen, x, ytimesw, logmag(column[y], params), 0, 0);
-    //}
     for(y = 0; y < screen->h; y++ ) {
-        setpixel(screen, x, y, logmag(column[FFT_SIZE/2 - 1 - logmap[y]], params), 0, 0);
+        setpixel(screen, x, y, redmap[logmagy], greenmap[logmagy], bluemap[logmagy]);
     }
     if (x< screen->w - 1) {
         x++;
@@ -208,6 +165,32 @@ int main(int argc, char* argv[])
     for(int i=0;i < FFT_SIZE;i++) {
         hannwin[i]=1.-cos(2.*M_PI*i/(FFT_SIZE-1));
     }
+    // preprocess colormap
+    Uint8 redmap[65536];    /*    __/¯ */
+    Uint8 greenmap[65536];  /*    /¯¯\ */
+    Uint8 bluemap[65536];   /*    ¯\__ */
+    for (Uint16 i=0;i<65536;i++) {
+        if (i<16384) {
+            redmap[i] = 0;
+            greenmap[i] = (Uint16)((float)(i)*255/16383);
+            bluemap[i] = 255;
+        }
+        else if (i<32768) {
+            redmap[i] = 0;
+            greenmap[i] = 255;
+            bluemap[i] = (Uint16)(255-(float)(i-32767)*255/16383);
+        }
+        else if (i<49152) {
+            redmap[i] = 
+            greenmap[i] = (Uint16)(255-(float)(i-49151)*255/16383);
+            bluemap[i] = 0;
+        }
+        else  {
+            redmap[i] = 255;
+            greenmap[i] = (Uint16)(255-(float)(i-49151)*255/16383);
+            bluemap[i] = 0;
+        }
+    }
     // preprocess vertical log mapping
     Uint16 *logmap;
     logmap = (Uint16 *)malloc(screen->h*sizeof(Uint16));
@@ -233,7 +216,6 @@ int main(int argc, char* argv[])
             samples_buf[wrcnt + i] = sampbuffer[2*i]/65536. + sampbuffer[2*i+1]/65536.;
         }
          wrcnt += alsaframes;
-         //wrcnt += genaudio(&samples_buf[wrcnt]);
          // manage buffer
          if (wrcnt > COPY_TRIG) {
              if(wrcnt - rdcnt > BUF_SIZE/2) {
@@ -250,7 +232,7 @@ int main(int argc, char* argv[])
             // perform FFT
             hann(&samples_buf[rdcnt], &hannwin[0], han_buf);
             kiss_fftr(mycfg, han_buf, fft_buf);
-            DrawScreen(screen, fft_buf, logmap, params);
+            DrawScreen(screen, fft_buf, logmap, redmap, greenmap, bluemap, params);
             rdcnt += FFT_SHIFT;
          }
 
