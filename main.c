@@ -25,14 +25,14 @@
 #define COPY_TRIG (BUF_SIZE - FSAMP)
 #define FFT_SIZE 2048
 #define FFT_SHIFT 256
-#define INIT_GAIN 45
+#define INIT_GAIN 8000
 #define INIT_OFFSET 0
 
 static char *device = "default";
 
 typedef struct {
-    Uint8 gain;
-    Uint8 offset;
+    Uint16 gain;
+    Uint16 offset;
 } fftcontext;
 
 Uint16 logmag(kiss_fft_cpx value, fftcontext params)
@@ -44,7 +44,7 @@ Uint16 logmag(kiss_fft_cpx value, fftcontext params)
     if (d>0) logd = log(d/2.);
     else logd = -21;
     float res = logd*params.gain + params.offset;
-    if (res > 16383.) return 16383;
+    if (res > 65535.) return 65535;
     if (res > 0.) return (Uint16)res;
     return 0;
 }
@@ -71,13 +71,13 @@ void DrawScreen(SDL_Surface* screen, kiss_fft_cpx* column, Uint16* logmap, Uint8
 {
     static int x = 0;
     int y, ytimesw;
-    Uint16 logmagy = logmag(column[FFT_SIZE/2 - 1 - logmap[y]], params);
 
     if(SDL_MUSTLOCK(screen)) {
         if(SDL_LockSurface(screen) < 0) return;
     }
 
     for(y = 0; y < screen->h; y++ ) {
+        Uint16 logmagy = logmag(column[FFT_SIZE/2 - 1 - logmap[y]], params);
         setpixel(screen, x, y, redmap[logmagy], greenmap[logmagy], bluemap[logmagy]);
     }
     if (x< screen->w - 1) {
@@ -166,28 +166,28 @@ int main(int argc, char* argv[])
         hannwin[i]=1.-cos(2.*M_PI*i/(FFT_SIZE-1));
     }
     // preprocess colormap
-    Uint8 redmap[65536];    /*    __/¯ */
-    Uint8 greenmap[65536];  /*    /¯¯\ */
-    Uint8 bluemap[65536];   /*    ¯\__ */
-    for (Uint16 i=0;i<65536;i++) {
+    Uint8* redmap = (Uint8*) malloc(65536*sizeof(Uint8));    /*    __/¯ */
+    Uint8* greenmap = (Uint8*) malloc(65536*sizeof(Uint8));  /*    /¯¯\ */
+    Uint8* bluemap = (Uint8*) malloc(65536*sizeof(Uint8));   /*    ¯\__ */
+    for (int i=0;i<65536;i++) {
         if (i<16384) {
             redmap[i] = 0;
-            greenmap[i] = (Uint16)((float)(i)*255/16383);
-            bluemap[i] = 255;
+            greenmap[i] = (Uint8)((float)(i)*255/16383);
+            bluemap[i] = 64;
         }
         else if (i<32768) {
             redmap[i] = 0;
             greenmap[i] = 255;
-            bluemap[i] = (Uint16)(255-(float)(i-32767)*255/16383);
+            bluemap[i] = (Uint8)(64-(float)(i-32767)*64/16383);
         }
         else if (i<49152) {
-            redmap[i] = 
-            greenmap[i] = (Uint16)(255-(float)(i-49151)*255/16383);
+            redmap[i] = (Uint8)((float)(i-49151)*255/16383);
+            greenmap[i] = 255;
             bluemap[i] = 0;
         }
         else  {
             redmap[i] = 255;
-            greenmap[i] = (Uint16)(255-(float)(i-49151)*255/16383);
+            greenmap[i] = (Uint8)(255-(float)(i-49151)*255/16383);
             bluemap[i] = 0;
         }
     }
@@ -243,10 +243,10 @@ int main(int argc, char* argv[])
 	              break;
                   case SDL_KEYDOWN: {
                       const Uint8 *state = SDL_GetKeyState(NULL);
-                      if (state[SDLK_DOWN]) params.gain -= 1;
-                      if (state[SDLK_UP]) params.gain += 1;
-                      if (state[SDLK_RIGHT]) params.offset += 1;
-                      if (state[SDLK_LEFT]) params.offset -= 1;
+                      if (state[SDLK_DOWN]) params.gain -= 100;
+                      if (state[SDLK_UP]) params.gain += 100;
+                      if (state[SDLK_RIGHT]) params.offset += 100;
+                      if (state[SDLK_LEFT]) params.offset -= 100;
                       if (state[SDLK_ESCAPE]) quit = 1;
                       printf("gain=%d, offset=%d\n",params.gain, params.offset);
                       break;
@@ -259,6 +259,9 @@ int main(int argc, char* argv[])
   
     snd_pcm_drain(handle);
     snd_pcm_close(handle);
+    free(redmap);
+    free(greenmap);
+    free(bluemap);
     free(logmap);
     free(alsabuffer);
     free(samples_buf);
