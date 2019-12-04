@@ -23,10 +23,11 @@
 #define UVAL8(S16) ((S16/256)+128)
 #define BUF_SIZE 400000
 #define COPY_TRIG (BUF_SIZE - FSAMP)
-#define FFT_SIZE 2048
+#define FFT_SIZE 4096
 #define FFT_SHIFT 256
 #define INIT_GAIN 8000
 #define INIT_OFFSET 0
+#define COLORMAP 1
 
 static char *device = "default";
 
@@ -41,7 +42,7 @@ Uint16 logmag(kiss_fft_cpx value, fftcontext params)
     float y = (float)value.i;
     float d = x*x + y*y;
     float logd;
-    if (d>0) logd = log(d/2.);
+    if (d>0) logd = log(d)/2.;
     else logd = -21;
     float res = logd*params.gain + params.offset;
     if (res > 65535.) return 65535;
@@ -77,8 +78,13 @@ void DrawScreen(SDL_Surface* screen, kiss_fft_cpx* column, Uint16* logmap, Uint8
     }
 
     for(y = 0; y < screen->h; y++ ) {
-        Uint16 logmagy = logmag(column[FFT_SIZE/2 - 1 - logmap[y]], params);
-        setpixel(screen, x, y, redmap[logmagy], greenmap[logmagy], bluemap[logmagy]);
+        if(COLORMAP) {
+            Uint16 logmagy = logmag(column[FFT_SIZE/2 - 1 - logmap[y]], params);
+            setpixel(screen, x, y, redmap[logmagy], greenmap[logmagy], bluemap[logmagy]);
+        }
+        else {
+            setpixel(screen, x, y, logmag(column[FFT_SIZE/2 - 1 - logmap[y]], params)/256, 0, 0);
+        }
     }
     if (x< screen->w - 1) {
         x++;
@@ -167,34 +173,32 @@ int main(int argc, char* argv[])
     }
     // preprocess colormap
     Uint8* redmap = (Uint8*) malloc(65536*sizeof(Uint8));    /*    __/¯ */
-    Uint8* greenmap = (Uint8*) malloc(65536*sizeof(Uint8));  /*    /¯¯\ */
+    Uint8* greenmap = (Uint8*) malloc(65536*sizeof(Uint8));  /*    //// */
     Uint8* bluemap = (Uint8*) malloc(65536*sizeof(Uint8));   /*    ¯\__ */
     for (int i=0;i<65536;i++) {
+            greenmap[i] = (Uint8)((float)(i)*255/65535);
         if (i<16384) {
             redmap[i] = 0;
-            greenmap[i] = (Uint8)((float)(i)*255/16383);
-            bluemap[i] = 64;
+            bluemap[i] = 63;
         }
         else if (i<32768) {
             redmap[i] = 0;
-            greenmap[i] = 255;
-            bluemap[i] = (Uint8)(64-(float)(i-32767)*64/16383);
+            bluemap[i] = (Uint8)(64-(float)(i-16384)*64/16383);
         }
         else if (i<49152) {
-            redmap[i] = (Uint8)((float)(i-49151)*255/16383);
-            greenmap[i] = 255;
+            redmap[i] = (Uint8)((float)(i-32768)*255/16383);
+            //greenmap[i] = 255;
             bluemap[i] = 0;
         }
         else  {
             redmap[i] = 255;
-            greenmap[i] = (Uint8)(255-(float)(i-49151)*255/16383);
             bluemap[i] = 0;
         }
     }
     // preprocess vertical log mapping
     Uint16 *logmap;
     logmap = (Uint16 *)malloc(screen->h*sizeof(Uint16));
-    const float clogfact = (FFT_SIZE/2 - 1)/log(screen->h);
+    const float clogfact = (FFT_SIZE/2 - 1)/log(screen->h-1);
     logmap[0] = 0;
     for(int i=1;i <screen->h;i++) {
         logmap[i] = (Uint16)(clogfact*log(i));
@@ -213,7 +217,7 @@ int main(int argc, char* argv[])
         // recopy to float
         for (int i=0;i<alsasize/2;i++) {
             Sint16* sampbuffer = (Sint16 *)alsabuffer;
-            samples_buf[wrcnt + i] = sampbuffer[2*i]/65536. + sampbuffer[2*i+1]/65536.;
+            samples_buf[wrcnt + i] = sampbuffer[2*i]/65535. + sampbuffer[2*i+1]/65535.;
         }
          wrcnt += alsaframes;
          // manage buffer
