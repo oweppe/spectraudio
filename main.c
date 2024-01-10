@@ -11,7 +11,7 @@
 #define ALSA_PCM_NEW_HW_PARAMS_API
 #include <alsa/asoundlib.h>
 
-#define WIDTH 1920
+#define WIDTH 1080
 #define HEIGHT 1080
 #define BPP 4
 #define DEPTH 32
@@ -23,12 +23,13 @@
 #define UVAL8(S16) ((S16/256)+128)
 #define BUF_SIZE 400000
 #define COPY_TRIG (BUF_SIZE - FSAMP)
-#define FFT_SIZE 2048
-#define FFT_SHIFT 256
-#define INIT_GAIN 45
-#define INIT_OFFSET 0
+#define FFT_SIZE 4096
+#define FFT_SHIFT FFT_SIZE/8
+#define INIT_GAIN 50
+#define INIT_OFFSET 200
 
-static char *device = "default";
+//static char *device = "pulse:alsa_output.usb-Generic_USB_Audio_201604140001-00.analog-stereo.monitor";
+static char *device = "pulse:alsa_output.usb-FiiO_DigiHug_USB_Audio-01.analog-stereo.monitor";
 
 typedef struct {
     Uint8 gain;
@@ -145,7 +146,8 @@ int main(int argc, char* argv[])
     SDL_Surface *screen;
     SDL_Event event;
     if (SDL_Init(SDL_INIT_VIDEO) < 0 ) return 1;
-    if (!(screen = SDL_SetVideoMode(WIDTH, HEIGHT, DEPTH, SDL_FULLSCREEN|SDL_HWSURFACE)))
+    //if (!(screen = SDL_SetVideoMode(WIDTH, HEIGHT, DEPTH, SDL_FULLSCREEN|SDL_HWSURFACE)))
+    if (!(screen = SDL_SetVideoMode(WIDTH, HEIGHT, DEPTH, SDL_HWSURFACE)))
     {
         SDL_Quit();
         return 1;
